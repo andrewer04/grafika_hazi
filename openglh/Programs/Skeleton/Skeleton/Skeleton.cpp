@@ -58,13 +58,17 @@ const char * const fragmentSource = R"(
 	
 	uniform vec3 color;		// uniform variable, the color of the primitive
 	uniform sampler2D textureUnit;
+	uniform int separator;
 
 	in vec2 texCoord;			// variable input: interpolated texture coordinates
 	out vec4 outColor;		// computed color of the current pixel
 
 	void main() {
-		outColor = vec4(color, 1);
-		outColor = texture(textureUnit, texCoord);		
+		if (separator == 0){
+			outColor = vec4(color, 1);
+		}else{
+			outColor = texture(textureUnit, texCoord);
+		}	
 	}
 )";
 
@@ -111,6 +115,8 @@ public:
 		vertices[1] = vec2(5, -5);  uvs[1] = vec2(1, 0);
 		vertices[2] = vec2(5, 5);   uvs[2] = vec2(1, 1);
 		vertices[3] = vec2(-5, 5);  uvs[3] = vec2(0, 1);
+
+		sx = sy = 1;
 	}
 
 	void Create() {
@@ -266,7 +272,7 @@ private:
 			float a3x = controlPoints[i].speed.x + controlPoints[i + 1].speed.x - 2 * controlPoints[i + 1].point.x + 2 * controlPoints[i].point.x;
 			float a3y = controlPoints[i].speed.y + controlPoints[i + 1].speed.y - 2 * controlPoints[i + 1].point.y + 2 * controlPoints[i].point.y;
 
-			for (float tau = 0; tau < 1; tau += 0.0001) {
+			for (float tau = 0; tau < 1; tau += 0.01) {
 				float x = a3x * pow(tau, 3.0) + a2x * pow(tau, 2.0) + a1x * tau + a0x;
 				float y = a3y * pow(tau, 3.0) + a2y * pow(tau, 2.0) + a1y * tau + a0y;
 
@@ -294,10 +300,17 @@ void onInitialization() {
 
 // Window has become invalid: Redraw
 void onDisplay() {
-	glClearColor(0, 1, 1, 0);     // background color
+	glClearColor(0, 0, 0, 0);     // background color
 	glClear(GL_COLOR_BUFFER_BIT); // clear frame buffer
 
+	int location = glGetUniformLocation(gpuProgram.getId(), "separator");
+
+	if (location >= 0) glUniform1i(location, 1);
+	else printf("uniform separator cannot be set\n");
 	cart.Draw();
+
+	if (location >= 0) glUniform1i(location, 0);
+	else printf("uniform separator cannot be set\n");
 	catmullrom.Draw();
 	
 
@@ -340,6 +353,6 @@ void onMouse(int button, int state, int pX, int pY) { // pX, pY are the pixel co
 void onIdle() {
 	long time = glutGet(GLUT_ELAPSED_TIME); // elapsed time since the start of the program
 	float sec = time / 1000.0f;
-	cart.Animate(sec);
+	//cart.Animate(sec);
 	glutPostRedisplay();
 }
