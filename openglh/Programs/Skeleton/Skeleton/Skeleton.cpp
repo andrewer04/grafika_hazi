@@ -39,9 +39,14 @@ const char * const vertexSource = R"(
 	precision highp float;		// normal floats, makes no difference on desktop computers
 
 	uniform mat4 MVP;			// uniform variable, the Model-View-Projection transformation matrix
+	
 	layout(location = 0) in vec2 vp;	// Varying input: vp = vertex position is expected in attrib array 0
+	layout(location = 1) in vec2 vertexUV;			// Attrib Array 1
+
+	out vec2 texCoord;								// output attribute
 
 	void main() {
+		texCoord = vertexUV;
 		gl_Position = vec4(vp.x, vp.y, 0, 1) * MVP;		// transform vp from modeling space to normalized device space
 	}
 )";
@@ -52,10 +57,14 @@ const char * const fragmentSource = R"(
 	precision highp float;	// normal floats, makes no difference on desktop computers
 	
 	uniform vec3 color;		// uniform variable, the color of the primitive
+	uniform sampler2D textureUnit;
+
+	in vec2 texCoord;			// variable input: interpolated texture coordinates
 	out vec4 outColor;		// computed color of the current pixel
 
 	void main() {
-		outColor = vec4(color, 1);	// computed color is the color of the primitive
+		outColor = vec4(color, 1);
+		outColor = texture(textureUnit, texCoord);		
 	}
 )";
 
@@ -72,7 +81,7 @@ class Camera2D {
 	vec2 wCenter; // center in world coordinates
 	vec2 wSize;   // width and height in world coordinates
 public:
-	Camera2D() : wCenter(0, 0), wSize(20, 20) { }
+	Camera2D() : wCenter(0, 0), wSize(40, 40) { }
 
 	mat4 V() { return TranslateMatrix(-wCenter); }
 	mat4 P() { return ScaleMatrix(vec2(2 / wSize.x, 2 / wSize.y)); }
@@ -87,6 +96,98 @@ public:
 GPUProgram gpuProgram; // vertex and fragment shaders
 unsigned int vao;	   // virtual world on the GPU
 Camera2D camera;
+
+class Cart {
+	unsigned int vao, vbo[2];
+	vec2 vertices[4], uvs[4];
+	Texture * pTexture;
+	float sx, sy;		// scaling
+	vec2 wTranslate;	// translation
+	float phi;			// angle of rotation
+
+public:
+	Cart() {
+		vertices[0] = vec2(-5, -5); uvs[0] = vec2(0, 0);
+		vertices[1] = vec2(5, -5);  uvs[1] = vec2(1, 0);
+		vertices[2] = vec2(5, 5);   uvs[2] = vec2(1, 1);
+		vertices[3] = vec2(-5, 5);  uvs[3] = vec2(0, 1);
+	}
+
+	void Create() {
+		glGenVertexArrays(1, &vao);	// create 1 vertex array object
+		glBindVertexArray(vao);		// make it active
+
+		glGenBuffers(2, vbo);	// Generate 1 vertex buffer objects
+
+		// vertex coordinates: vbo[0] -> Attrib Array 0 -> vertexPosition of the vertex shader
+		glBindBuffer(GL_ARRAY_BUFFER, vbo[0]); // make it active, it is an array
+		glBufferData(GL_ARRAY_BUFFER, sizeof(vertices), vertices, GL_DYNAMIC_DRAW);	   // copy to that part of the memory which will be modified 
+		// Map Attribute Array 0 to the current bound vertex buffer (vbo[0])
+		glEnableVertexAttribArray(0);
+		glVertexAttribPointer(0, 2, GL_FLOAT, GL_FALSE, 0, NULL);     // stride and offset: it is tightly packed
+
+		glBindBuffer(GL_ARRAY_BUFFER, vbo[1]); // make it active, it is an array
+		glBufferData(GL_ARRAY_BUFFER, sizeof(uvs), uvs, GL_STATIC_DRAW);	   // copy to that part of the memory which is not modified 
+		// Map Attribute Array 0 to the current bound vertex buffer (vbo[0])
+		glEnableVertexAttribArray(1);
+		glVertexAttribPointer(1, 2, GL_FLOAT, GL_FALSE, 0, NULL);     // stride and offset: it is tightly packed
+
+		int width = 128, height = 128;
+		std::vector<vec4> image(width * height);
+		for (int y = 0; y < height; y++) {
+			for (int x = 0; x < width; x++) {
+				if ((pow(x - 65, 2) + pow(y - 65, 2) - pow(30, 2)) < 0) {
+					image[y * width + x] = vec4(1, 1, 1, 1);
+				}
+				else {
+					image[y * width + x] = vec4(0, 0, 0, 1);
+				}
+			}
+
+		}
+
+		pTexture = new Texture(width, height, image);
+	}
+
+	void Animate(float t) {
+		sx = 1;
+		sy = 1;
+		wTranslate = vec2(0, 0);
+		phi = t;
+	}
+
+	mat4 M() {
+		mat4 Mscale(sx, 0, 0, 0,
+			0, sy, 0, 0,
+			0, 0, 0, 0,
+			0, 0, 0, 1); // scaling
+
+		mat4 Mrotate(cosf(phi), sinf(phi), 0, 0,
+			-sinf(phi), cosf(phi), 0, 0,
+			0, 0, 1, 0,
+			0, 0, 0, 1); // rotation
+
+		mat4 Mtranslate(1, 0, 0, 0,
+			0, 1, 0, 0,
+			0, 0, 0, 0,
+			wTranslate.x, wTranslate.y, 0, 1); // translation
+
+		return Mscale * Mrotate * Mtranslate;	// model transformation
+	}
+
+	void Draw() {
+		glBindVertexArray(vao);	// make the vao and its vbos active playing the role of the data source
+
+		mat4 MVPTransform = M() * camera.V() * camera.P();
+
+		// set GPU uniform matrix variable MVP with the content of CPU variable MVPTransform
+		MVPTransform.SetUniform(gpuProgram.getId(), "MVP");
+
+		pTexture->SetUniform(gpuProgram.getId(), "textureUnit");
+
+		glDrawArrays(GL_TRIANGLE_FAN, 0, 4);	// draw two triangles forming a quad
+	}
+};
 
 class CatmullRom {
 	GLuint vao, vbo; // vertex array object, vertex buffer object
@@ -120,7 +221,7 @@ public:
 			mat4 MVPTransform = camera.V() * camera.P();
 			MVPTransform.SetUniform(gpuProgram.getId(), "MVP");
 
-			vec3 Color = vec3(1, 1, 1);
+			vec3 Color = vec3(1, 0, 0);
 			Color.SetUniform(gpuProgram.getId(), "color");
 
 			glBindVertexArray(vao);
@@ -178,12 +279,14 @@ private:
 };
 
 CatmullRom catmullrom; // CatMull-Rom Spline
+Cart cart;
 
 // Initialization, create an OpenGL context
 void onInitialization() {
 	glViewport(0, 0, windowWidth, windowHeight);
 
 	catmullrom.Create();
+	cart.Create();
 
 	// create program for the GPU
 	gpuProgram.Create(vertexSource, fragmentSource, "outColor");
@@ -191,17 +294,22 @@ void onInitialization() {
 
 // Window has become invalid: Redraw
 void onDisplay() {
-	glClearColor(0, 0, 0, 0);     // background color
+	glClearColor(0, 1, 1, 0);     // background color
 	glClear(GL_COLOR_BUFFER_BIT); // clear frame buffer
 
+	cart.Draw();
 	catmullrom.Draw();
+	
 
 	glutSwapBuffers(); // exchange buffers for double buffering
 }
 
 // Key of ASCII code pressed
 void onKeyboard(unsigned char key, int pX, int pY) {
-	if (key == 'd') glutPostRedisplay();         // if d, invalidate display, i.e. redraw
+	if (key == ' ') {
+		
+		glutPostRedisplay();
+	}
 }
 
 // Key of ASCII code released
@@ -231,4 +339,7 @@ void onMouse(int button, int state, int pX, int pY) { // pX, pY are the pixel co
 // Idle event indicating that some time elapsed: do animation here
 void onIdle() {
 	long time = glutGet(GLUT_ELAPSED_TIME); // elapsed time since the start of the program
+	float sec = time / 1000.0f;
+	cart.Animate(sec);
+	glutPostRedisplay();
 }
