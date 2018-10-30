@@ -18,8 +18,8 @@
 //
 // NYILATKOZAT
 // ---------------------------------------------------------------------------------------------
-// Nev    : 
-// Neptun : 
+// Nev    : Bárányos András
+// Neptun : KAIKQ6
 // ---------------------------------------------------------------------------------------------
 // ezennel kijelentem, hogy a feladatot magam keszitettem, es ha barmilyen segitseget igenybe vettem vagy
 // mas szellemi termeket felhasznaltam, akkor a forrast es az atvett reszt kommentekben egyertelmuen jeloltem.
@@ -55,34 +55,135 @@ const char * const fragmentSource = R"(
 	out vec4 outColor;		// computed color of the current pixel
 
 	void main() {
-		outColor = vec4(0, 1, 0, 1);	// computed color is the color of the primitive
+		outColor = vec4(color, 1);	// computed color is the color of the primitive
 	}
 )";
 
+struct controlPoint {
+	vec4 point;
+	vec2 speed;
+	controlPoint(vec4 p, vec2 s) {
+		point = p;
+		speed = s;
+	}
+};
+
+class Camera2D {
+	vec2 wCenter; // center in world coordinates
+	vec2 wSize;   // width and height in world coordinates
+public:
+	Camera2D() : wCenter(0, 0), wSize(20, 20) { }
+
+	mat4 V() { return TranslateMatrix(-wCenter); }
+	mat4 P() { return ScaleMatrix(vec2(2 / wSize.x, 2 / wSize.y)); }
+
+	mat4 Vinv() { return TranslateMatrix(wCenter); }
+	mat4 Pinv() { return ScaleMatrix(vec2(wSize.x / 2, wSize.y / 2)); }
+
+	void Zoom(float s) { wSize = wSize * s; }
+	void Pan(vec2 t) { wCenter = wCenter + t; }
+};
+
 GPUProgram gpuProgram; // vertex and fragment shaders
 unsigned int vao;	   // virtual world on the GPU
+Camera2D camera;
+
+class CatmullRom {
+	GLuint vao, vbo; // vertex array object, vertex buffer object
+	std::vector<controlPoint> controlPoints;
+	std::vector<float>  vertexData; // interleaved data of coordinates
+
+public:
+	void Create() {
+		glGenVertexArrays(1, &vao);
+		glBindVertexArray(vao);
+
+		glGenBuffers(1, &vbo);
+		glBindBuffer(GL_ARRAY_BUFFER, vbo);
+
+		glEnableVertexAttribArray(0);  // attribute array 0
+		// Map attribute array 0 to the vertex data of the interleaved vbo
+		glVertexAttribPointer(0, 2, GL_FLOAT, GL_FALSE, 2 * sizeof(float), NULL); // attribute array, components/attribute, component type, normalize?, stride, offset
+	}
+
+	void AddControlPoint(float x, float y) {
+		controlPoint point = controlPoint(vec4(x, y, 0, 1), vec2(0, 0));
+		controlPoints.push_back(point);
+		printf("Point added x:%3.2f, y:%3.2f\n", x, y);
+	}
+
+	void Draw() {
+		if (controlPoints.size() > 1) {
+			calculateSpeed();
+			hermite();
+
+			mat4 MVPTransform = camera.V() * camera.P();
+			MVPTransform.SetUniform(gpuProgram.getId(), "MVP");
+
+			vec3 Color = vec3(1, 1, 1);
+			Color.SetUniform(gpuProgram.getId(), "color");
+
+			glBindVertexArray(vao);
+
+			// copy data to the GPU
+			glBindBuffer(GL_ARRAY_BUFFER, vbo);
+			glBufferData(GL_ARRAY_BUFFER, vertexData.size() * sizeof(float), &vertexData[0], GL_DYNAMIC_DRAW);
+			
+			glDrawArrays(GL_LINE_STRIP, 0, vertexData.size() / 2);
+		}
+	}
+
+private:
+	void calculateSpeed() {
+
+		//first point
+		controlPoints[0].speed = vec2(0,0);
+		//last point
+		controlPoints[controlPoints.size() - 1].speed = vec2(0,0);
+
+		//else
+		for (int i = 1; i < controlPoints.size()-1; i++)
+		{
+			controlPoints[i].speed = vec2((0.5 * (controlPoints[i + 1].point.x - controlPoints[i - 1].point.x)), (0.5 * (controlPoints[i + 1].point.y - controlPoints[i - 1].point.y)));
+		}
+	}
+
+	void hermite() {
+		vertexData.clear();
+		for (int i = 0; i < controlPoints.size(); i++) {
+			if (i == controlPoints.size() - 1) return;
+
+			float a0x = controlPoints[i].point.x;
+			float a0y = controlPoints[i].point.y;
+
+			float a1x = controlPoints[i].speed.x;
+			float a1y = controlPoints[i].speed.y;
+
+			float a2x = 3 * controlPoints[i + 1].point.x - 3 * controlPoints[i].point.x - 2 * controlPoints[i].speed.x - controlPoints[i + 1].speed.x;
+			float a2y = 3 * controlPoints[i + 1].point.y - 3 * controlPoints[i].point.y - 2 * controlPoints[i].speed.y - controlPoints[i + 1].speed.y;
+
+			float a3x = controlPoints[i].speed.x + controlPoints[i + 1].speed.x - 2 * controlPoints[i + 1].point.x + 2 * controlPoints[i].point.x;
+			float a3y = controlPoints[i].speed.y + controlPoints[i + 1].speed.y - 2 * controlPoints[i + 1].point.y + 2 * controlPoints[i].point.y;
+
+			for (float tau = 0; tau < 1; tau += 0.0001) {
+				float x = a3x * pow(tau, 3.0) + a2x * pow(tau, 2.0) + a1x * tau + a0x;
+				float y = a3y * pow(tau, 3.0) + a2y * pow(tau, 2.0) + a1y * tau + a0y;
+
+				vec4 wVertex = vec4(x, y, 0, 1) * camera.Pinv() * camera.Vinv();
+				vertexData.push_back(wVertex.x);
+				vertexData.push_back(wVertex.y);
+			}
+		}
+	}
+};
+
+CatmullRom catmullrom; // CatMull-Rom Spline
 
 // Initialization, create an OpenGL context
 void onInitialization() {
 	glViewport(0, 0, windowWidth, windowHeight);
 
-	glGenVertexArrays(1, &vao);	// get 1 vao id
-	glBindVertexArray(vao);		// make it active
-
-	unsigned int vbo;		// vertex buffer object
-	glGenBuffers(1, &vbo);	// Generate 1 buffer
-	glBindBuffer(GL_ARRAY_BUFFER, vbo);
-	// Geometry with 24 bytes (6 floats or 3 x 2 coordinates)
-	float vertices[] = { -0.8f, -0.8f, -0.6f, 1.0f, 0.8f, -0.2f };
-	glBufferData(GL_ARRAY_BUFFER, 	// Copy to GPU target
-		sizeof(vertices),  // # bytes
-		vertices,	      	// address
-		GL_STATIC_DRAW);	// we do not change later
-
-	glEnableVertexAttribArray(0);  // AttribArray 0
-	glVertexAttribPointer(0,       // vbo -> AttribArray 0
-		2, GL_FLOAT, GL_FALSE, // two floats/attrib, not fixed-point
-		0, NULL); 		     // stride, offset: tightly packed
+	catmullrom.Create();
 
 	// create program for the GPU
 	gpuProgram.Create(vertexSource, fragmentSource, "outColor");
@@ -93,20 +194,7 @@ void onDisplay() {
 	glClearColor(0, 0, 0, 0);     // background color
 	glClear(GL_COLOR_BUFFER_BIT); // clear frame buffer
 
-	// Set color to (0, 1, 0) = green
-	int location = glGetUniformLocation(gpuProgram.getId(), "color");
-	glUniform3f(location, 0.0f, 1.0f, 0.0f); // 3 floats
-
-	float MVPtransf[4][4] = { 1, 0, 0, 0,    // MVP matrix, 
-		                      0, 1, 0, 0,    // row-major!
-		                      0, 0, 1, 0,
-		                      0, 0, 0, 1 };
-
-	location = glGetUniformLocation(gpuProgram.getId(), "MVP");	// Get the GPU location of uniform variable MVP
-	glUniformMatrix4fv(location, 1, GL_TRUE, &MVPtransf[0][0]);	// Load a 4x4 row-major float matrix to the specified location
-
-	glBindVertexArray(vao);  // Draw call
-	glDrawArrays(GL_TRIANGLES, 0 /*startIdx*/, 3 /*# Elements*/);
+	catmullrom.Draw();
 
 	glutSwapBuffers(); // exchange buffers for double buffering
 }
@@ -125,7 +213,6 @@ void onMouseMotion(int pX, int pY) {	// pX, pY are the pixel coordinates of the 
 	// Convert to normalized device space
 	float cX = 2.0f * pX / windowWidth - 1;	// flip y axis
 	float cY = 1.0f - 2.0f * pY / windowHeight;
-	printf("Mouse moved to (%3.2f, %3.2f)\n", cX, cY);
 }
 
 // Mouse click event
@@ -134,17 +221,11 @@ void onMouse(int button, int state, int pX, int pY) { // pX, pY are the pixel co
 	float cX = 2.0f * pX / windowWidth - 1;	// flip y axis
 	float cY = 1.0f - 2.0f * pY / windowHeight;
 
-	char * buttonStat;
-	switch (state) {
-	case GLUT_DOWN: buttonStat = "pressed"; break;
-	case GLUT_UP:   buttonStat = "released"; break;
+	if (button == GLUT_LEFT_BUTTON && state == GLUT_DOWN) {
+		catmullrom.AddControlPoint(cX, cY);
+		glutPostRedisplay();
 	}
 
-	switch (button) {
-	case GLUT_LEFT_BUTTON:   printf("Left button %s at (%3.2f, %3.2f)\n", buttonStat, cX, cY);   break;
-	case GLUT_MIDDLE_BUTTON: printf("Middle button %s at (%3.2f, %3.2f)\n", buttonStat, cX, cY); break;
-	case GLUT_RIGHT_BUTTON:  printf("Right button %s at (%3.2f, %3.2f)\n", buttonStat, cX, cY);  break;
-	}
 }
 
 // Idle event indicating that some time elapsed: do animation here
