@@ -168,6 +168,10 @@ public:
 		phi = phi + t;
 	}
 
+	void move(vec2 vec) {
+		wTranslate = vec;
+	}
+
 	mat4 M() {
 		mat4 Mscale(sx, 0, 0, 0,
 			0, sy, 0, 0,
@@ -203,10 +207,10 @@ public:
 
 class CatmullRom {
 	GLuint vao, vbo; // vertex array object, vertex buffer object
-	std::vector<controlPoint> controlPoints;
 	std::vector<float>  vertexData; // interleaved data of coordinates
 
 public:
+	std::vector<controlPoint> controlPoints;
 	void Create() {
 		glGenVertexArrays(1, &vao);
 		glBindVertexArray(vao);
@@ -314,7 +318,7 @@ void onDisplay() {
 
 	int location = glGetUniformLocation(gpuProgram.getId(), "separator");
 
-	if (cartStart) {
+	if (cartStart && catmullrom.controlPoints.size() >= 1) {
 		if (location >= 0) glUniform1i(location, 1);
 		else printf("uniform separator cannot be set\n");
 		cart.Draw();
@@ -331,7 +335,13 @@ void onDisplay() {
 // Key of ASCII code pressed
 void onKeyboard(unsigned char key, int pX, int pY) {
 	if (key == ' ') {
-		cartStart = true;
+		if (catmullrom.controlPoints.size() >= 1) {
+			vec4 startPoint = vec4(catmullrom.controlPoints[0].point.x, catmullrom.controlPoints[0].point.y, 0, 1) * camera.Pinv() * camera.Vinv();
+			cart.move(vec2(startPoint.x, startPoint.y));
+		}
+		if (catmullrom.controlPoints.size() >= 2) {
+			cartStart = true;
+		}
 		glutPostRedisplay();
 	}
 	if (key == 'r')
