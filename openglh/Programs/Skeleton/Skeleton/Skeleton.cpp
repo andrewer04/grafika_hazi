@@ -98,7 +98,6 @@ public:
 };
 
 GPUProgram gpuProgram; // vertex and fragment shaders
-unsigned int vao;	   // virtual world on the GPU
 Camera2D camera;
 
 class Cart {
@@ -140,16 +139,19 @@ public:
 
 		int width = 128, height = 128;
 		std::vector<vec4> image(width * height);
+		float a = 30.0f;
+		float b = 15.0f;
+		vec2 center = vec2(64, 64);
 		for (int y = 0; y < height; y++) {
 			for (int x = 0; x < width; x++) {
-				if ((pow(x - 65, 2) + pow(y - 65, 2) - pow(30, 2)) < 0) {
+				float ellipszis = pow(x - center.x, 2) / pow(a, 2) + pow(y - center.y, 2) / pow(b, 2);
+				if (ellipszis < 1) {
 					image[y * width + x] = vec4(1, 1, 1, 1);
 				}
 				else {
 					image[y * width + x] = vec4(0, 0, 0, 1);
 				}
 			}
-
 		}
 
 		pTexture = new Texture(width, height, image);
@@ -286,6 +288,7 @@ private:
 
 CatmullRom catmullrom; // CatMull-Rom Spline
 Cart cart;
+int cartStart;
 
 // Initialization, create an OpenGL context
 void onInitialization() {
@@ -293,6 +296,8 @@ void onInitialization() {
 
 	catmullrom.Create();
 	cart.Create();
+
+	cartStart = 0;
 
 	// create program for the GPU
 	gpuProgram.Create(vertexSource, fragmentSource, "outColor");
@@ -305,9 +310,11 @@ void onDisplay() {
 
 	int location = glGetUniformLocation(gpuProgram.getId(), "separator");
 
-	if (location >= 0) glUniform1i(location, 1);
-	else printf("uniform separator cannot be set\n");
-	cart.Draw();
+	if (cartStart != 0) {
+		if (location >= 0) glUniform1i(location, 1);
+		else printf("uniform separator cannot be set\n");
+		cart.Draw();
+	}
 
 	if (location >= 0) glUniform1i(location, 0);
 	else printf("uniform separator cannot be set\n");
@@ -320,7 +327,7 @@ void onDisplay() {
 // Key of ASCII code pressed
 void onKeyboard(unsigned char key, int pX, int pY) {
 	if (key == ' ') {
-		
+		cartStart = 1;
 		glutPostRedisplay();
 	}
 }
