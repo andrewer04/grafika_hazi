@@ -97,8 +97,99 @@ public:
 	void Pan(vec2 t) { wCenter = wCenter + t; }
 };
 
-GPUProgram gpuProgram; // vertex and fragment shaders
 Camera2D camera;
+GPUProgram gpuProgram; // vertex and fragment shaders
+
+class CatmullRom {
+	GLuint vao, vbo; // vertex array object, vertex buffer object
+
+public:
+	std::vector<float>  vertexData; // interleaved data of coordinates
+	std::vector<controlPoint> controlPoints;
+	void Create() {
+		glGenVertexArrays(1, &vao);
+		glBindVertexArray(vao);
+
+		glGenBuffers(1, &vbo);
+		glBindBuffer(GL_ARRAY_BUFFER, vbo);
+
+		glEnableVertexAttribArray(0);  // attribute array 0
+		// Map attribute array 0 to the vertex data of the interleaved vbo
+		glVertexAttribPointer(0, 2, GL_FLOAT, GL_FALSE, 2 * sizeof(float), NULL); // attribute array, components/attribute, component type, normalize?, stride, offset
+	}
+
+	void AddControlPoint(float x, float y) {
+		controlPoint point = controlPoint(vec4(x, y, 0, 1), vec2(0, 0));
+		controlPoints.push_back(point);
+		printf("Point added x:%3.2f, y:%3.2f\n", x, y);
+	}
+
+	void Draw() {
+		if (controlPoints.size() > 1) {
+			calculateSpeed();
+			hermite();
+
+			mat4 MVPTransform = camera.V() * camera.P();
+			MVPTransform.SetUniform(gpuProgram.getId(), "MVP");
+
+			vec3 Color = vec3(1, 0, 0);
+			Color.SetUniform(gpuProgram.getId(), "color");
+
+			glBindVertexArray(vao);
+
+			// copy data to the GPU
+			glBindBuffer(GL_ARRAY_BUFFER, vbo);
+			glBufferData(GL_ARRAY_BUFFER, vertexData.size() * sizeof(float), &vertexData[0], GL_DYNAMIC_DRAW);
+
+			glDrawArrays(GL_LINE_STRIP, 0, vertexData.size() / 2);
+		}
+	}
+
+private:
+	void calculateSpeed() {
+
+		//first point
+		controlPoints[0].speed = vec2(0, 0);
+		//last point
+		controlPoints[controlPoints.size() - 1].speed = vec2(0, 0);
+
+		//else
+		for (int i = 1; i < controlPoints.size() - 1; i++)
+		{
+			controlPoints[i].speed = vec2((0.5 * (controlPoints[i + 1].point.x - controlPoints[i - 1].point.x)), (0.5 * (controlPoints[i + 1].point.y - controlPoints[i - 1].point.y)));
+		}
+	}
+
+	void hermite() {
+		vertexData.clear();
+		for (int i = 0; i < controlPoints.size(); i++) {
+			if (i == controlPoints.size() - 1) return;
+
+			float a0x = controlPoints[i].point.x;
+			float a0y = controlPoints[i].point.y;
+
+			float a1x = controlPoints[i].speed.x;
+			float a1y = controlPoints[i].speed.y;
+
+			float a2x = 3 * controlPoints[i + 1].point.x - 3 * controlPoints[i].point.x - 2 * controlPoints[i].speed.x - controlPoints[i + 1].speed.x;
+			float a2y = 3 * controlPoints[i + 1].point.y - 3 * controlPoints[i].point.y - 2 * controlPoints[i].speed.y - controlPoints[i + 1].speed.y;
+
+			float a3x = controlPoints[i].speed.x + controlPoints[i + 1].speed.x - 2 * controlPoints[i + 1].point.x + 2 * controlPoints[i].point.x;
+			float a3y = controlPoints[i].speed.y + controlPoints[i + 1].speed.y - 2 * controlPoints[i + 1].point.y + 2 * controlPoints[i].point.y;
+
+			for (float tau = 0; tau < 1; tau += 0.01) {
+				float x = a3x * pow(tau, 3.0) + a2x * pow(tau, 2.0) + a1x * tau + a0x;
+				float y = a3y * pow(tau, 3.0) + a2y * pow(tau, 2.0) + a1y * tau + a0y;
+
+				vec4 wVertex = vec4(x, y, 0, 1) * camera.Pinv() * camera.Vinv();
+				vertexData.push_back(wVertex.x);
+				vertexData.push_back(wVertex.y);
+			}
+		}
+	}
+};
+
+CatmullRom catmullrom; // CatMull-Rom Spline
 
 class Cart {
 	unsigned int vao, vbo[2];
@@ -157,19 +248,53 @@ public:
 		pTexture = new Texture(width, height, image);
 	}
 
-	void Animate(float t) {
-		sx = 1;
-		sy = 1;
-		wTranslate = vec2(0, 0);
-		phi = t;
+	int index = 0;
+	int currentX = index;
+	int currentY = index + 1;
+	int nextX = index + 2;
+	int nextY = index + 3;
+	void Animate(float sec) {
+		if (true) {
+			vec2 currentPoint;
+			vec2 nextPoint;
+
+			currentPoint.x = catmullrom.vertexData[currentX];
+			currentPoint.y = catmullrom.vertexData[currentY];
+			nextPoint.x = catmullrom.vertexData[nextX];
+			nextPoint.y = catmullrom.vertexData[nextY];
+
+			wMove(nextPoint);
+			rotate(calcAngle(currentX, currentY));
+
+			if (index < catmullrom.vertexData.size()-4 ) {
+				index += 2;
+				currentX = index;
+				currentY = index + 1;
+				nextX = index + 2;
+				nextY = index + 3;
+			}
+			else {
+				index = 0;
+				currentX = index;
+				currentY = index + 1;
+				nextX = index + 2;
+				nextY = index + 3;
+			}
+				
+		}
 	}
 
 	void rotate(float t) {
-		phi = phi + t;
+		phi = 3.14/2 + t;
 	}
 
-	void move(vec2 vec) {
-		wTranslate = vec;
+	void move(vec2 where) {
+		vec4 nextPoint = vec4(where.x, where.y, 0, 1) * camera.Pinv() * camera.Vinv();
+		wMove(vec2(nextPoint.x, nextPoint.y));
+	}
+
+	void wMove(vec2 where) {
+		wTranslate = where;
 	}
 
 	mat4 M() {
@@ -203,98 +328,19 @@ public:
 
 		glDrawArrays(GL_TRIANGLE_FAN, 0, 4);	// draw two triangles forming a quad
 	}
-};
-
-class CatmullRom {
-	GLuint vao, vbo; // vertex array object, vertex buffer object
-	std::vector<float>  vertexData; // interleaved data of coordinates
-
-public:
-	std::vector<controlPoint> controlPoints;
-	void Create() {
-		glGenVertexArrays(1, &vao);
-		glBindVertexArray(vao);
-
-		glGenBuffers(1, &vbo);
-		glBindBuffer(GL_ARRAY_BUFFER, vbo);
-
-		glEnableVertexAttribArray(0);  // attribute array 0
-		// Map attribute array 0 to the vertex data of the interleaved vbo
-		glVertexAttribPointer(0, 2, GL_FLOAT, GL_FALSE, 2 * sizeof(float), NULL); // attribute array, components/attribute, component type, normalize?, stride, offset
-	}
-
-	void AddControlPoint(float x, float y) {
-		controlPoint point = controlPoint(vec4(x, y, 0, 1), vec2(0, 0));
-		controlPoints.push_back(point);
-		printf("Point added x:%3.2f, y:%3.2f\n", x, y);
-	}
-
-	void Draw() {
-		if (controlPoints.size() > 1) {
-			calculateSpeed();
-			hermite();
-
-			mat4 MVPTransform = camera.V() * camera.P();
-			MVPTransform.SetUniform(gpuProgram.getId(), "MVP");
-
-			vec3 Color = vec3(1, 0, 0);
-			Color.SetUniform(gpuProgram.getId(), "color");
-
-			glBindVertexArray(vao);
-
-			// copy data to the GPU
-			glBindBuffer(GL_ARRAY_BUFFER, vbo);
-			glBufferData(GL_ARRAY_BUFFER, vertexData.size() * sizeof(float), &vertexData[0], GL_DYNAMIC_DRAW);
-			
-			glDrawArrays(GL_LINE_STRIP, 0, vertexData.size() / 2);
-		}
-	}
 
 private:
-	void calculateSpeed() {
-
-		//first point
-		controlPoints[0].speed = vec2(0,0);
-		//last point
-		controlPoints[controlPoints.size() - 1].speed = vec2(0,0);
-
-		//else
-		for (int i = 1; i < controlPoints.size()-1; i++)
-		{
-			controlPoints[i].speed = vec2((0.5 * (controlPoints[i + 1].point.x - controlPoints[i - 1].point.x)), (0.5 * (controlPoints[i + 1].point.y - controlPoints[i - 1].point.y)));
-		}
+	vec2 getDirectionVec(vec2 from, vec2 to) {
+		return vec2(to.x - from.x, to.y - from.y);
 	}
-
-	void hermite() {
-		vertexData.clear();
-		for (int i = 0; i < controlPoints.size(); i++) {
-			if (i == controlPoints.size() - 1) return;
-
-			float a0x = controlPoints[i].point.x;
-			float a0y = controlPoints[i].point.y;
-
-			float a1x = controlPoints[i].speed.x;
-			float a1y = controlPoints[i].speed.y;
-
-			float a2x = 3 * controlPoints[i + 1].point.x - 3 * controlPoints[i].point.x - 2 * controlPoints[i].speed.x - controlPoints[i + 1].speed.x;
-			float a2y = 3 * controlPoints[i + 1].point.y - 3 * controlPoints[i].point.y - 2 * controlPoints[i].speed.y - controlPoints[i + 1].speed.y;
-
-			float a3x = controlPoints[i].speed.x + controlPoints[i + 1].speed.x - 2 * controlPoints[i + 1].point.x + 2 * controlPoints[i].point.x;
-			float a3y = controlPoints[i].speed.y + controlPoints[i + 1].speed.y - 2 * controlPoints[i + 1].point.y + 2 * controlPoints[i].point.y;
-
-			for (float tau = 0; tau < 1; tau += 0.01) {
-				float x = a3x * pow(tau, 3.0) + a2x * pow(tau, 2.0) + a1x * tau + a0x;
-				float y = a3y * pow(tau, 3.0) + a2y * pow(tau, 2.0) + a1y * tau + a0y;
-
-				vec4 wVertex = vec4(x, y, 0, 1) * camera.Pinv() * camera.Vinv();
-				vertexData.push_back(wVertex.x);
-				vertexData.push_back(wVertex.y);
-			}
-		}
+	vec2 getNormalVec(vec2 directionVec) {
+		return vec2(0-directionVec.y, directionVec.x);
+	}
+	float calcAngle(float x, float y) {
+		return atan((catmullrom.vertexData[x + 2] - catmullrom.vertexData[x]) / (catmullrom.vertexData[y] - catmullrom.vertexData[y+2]));
 	}
 };
 
-CatmullRom catmullrom; // CatMull-Rom Spline
 Cart cart;
 bool cartStart;
 
@@ -336,8 +382,8 @@ void onDisplay() {
 void onKeyboard(unsigned char key, int pX, int pY) {
 	if (key == ' ') {
 		if (catmullrom.controlPoints.size() >= 1) {
-			vec4 startPoint = vec4(catmullrom.controlPoints[0].point.x, catmullrom.controlPoints[0].point.y, 0, 1) * camera.Pinv() * camera.Vinv();
-			cart.move(vec2(startPoint.x, startPoint.y));
+			cart.move(vec2(catmullrom.controlPoints[0].point.x, catmullrom.controlPoints[0].point.y));
+			cart.rotate(3.14 / 2);
 		}
 		if (catmullrom.controlPoints.size() >= 2) {
 			cartStart = true;
@@ -379,6 +425,6 @@ void onMouse(int button, int state, int pX, int pY) { // pX, pY are the pixel co
 void onIdle() {
 	long time = glutGet(GLUT_ELAPSED_TIME); // elapsed time since the start of the program
 	float sec = time / 1000.0f;
-	//cart.Animate(sec);
+	if(cartStart && catmullrom.controlPoints.size() >= 1) cart.Animate(sec);
 	glutPostRedisplay();
 }
