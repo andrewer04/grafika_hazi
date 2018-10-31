@@ -132,7 +132,7 @@ public:
 			mat4 MVPTransform = camera.V() * camera.P();
 			MVPTransform.SetUniform(gpuProgram.getId(), "MVP");
 
-			vec3 Color = vec3(1, 0, 0);
+			vec3 Color = vec3(0, 1, 0);
 			Color.SetUniform(gpuProgram.getId(), "color");
 
 			glBindVertexArray(vao);
@@ -253,8 +253,8 @@ public:
 	int currentY = index + 1;
 	int nextX = index + 2;
 	int nextY = index + 3;
-	void Animate(float sec) {
-		if (true) {
+	void Animate(long time) {
+		if (fmod(time,5) == 0) {
 			vec2 currentPoint;
 			vec2 nextPoint;
 
@@ -263,7 +263,11 @@ public:
 			nextPoint.x = catmullrom.vertexData[nextX];
 			nextPoint.y = catmullrom.vertexData[nextY];
 
-			wMove(nextPoint);
+			vec2 directionVec = getDirectionVec(currentPoint, nextPoint);
+			vec2 normalVec = getNormalVec(directionVec);
+			vec2 iNormalVec = vec2(normalVec.x / length(normalVec), normalVec.y / length(normalVec));
+
+			wMove(nextPoint + iNormalVec * 1.15);
 			rotate(calcAngle(currentX, currentY));
 
 			if (index < catmullrom.vertexData.size()-4 ) {
@@ -390,11 +394,6 @@ void onKeyboard(unsigned char key, int pX, int pY) {
 		}
 		glutPostRedisplay();
 	}
-	if (key == 'r')
-	{
-		cart.rotate(3.14 / 2);
-		glutPostRedisplay();
-	}
 }
 
 // Key of ASCII code released
@@ -424,7 +423,6 @@ void onMouse(int button, int state, int pX, int pY) { // pX, pY are the pixel co
 // Idle event indicating that some time elapsed: do animation here
 void onIdle() {
 	long time = glutGet(GLUT_ELAPSED_TIME); // elapsed time since the start of the program
-	float sec = time / 1000.0f;
-	if(cartStart && catmullrom.controlPoints.size() >= 1) cart.Animate(sec);
+	if(cartStart && catmullrom.controlPoints.size() >= 1) cart.Animate(time);
 	glutPostRedisplay();
 }
