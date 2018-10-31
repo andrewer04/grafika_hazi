@@ -164,6 +164,10 @@ public:
 		phi = t;
 	}
 
+	void rotate(float t) {
+		phi = phi + t;
+	}
+
 	mat4 M() {
 		mat4 Mscale(sx, 0, 0, 0,
 			0, sy, 0, 0,
@@ -288,7 +292,7 @@ private:
 
 CatmullRom catmullrom; // CatMull-Rom Spline
 Cart cart;
-int cartStart;
+bool cartStart;
 
 // Initialization, create an OpenGL context
 void onInitialization() {
@@ -310,7 +314,7 @@ void onDisplay() {
 
 	int location = glGetUniformLocation(gpuProgram.getId(), "separator");
 
-	if (cartStart != 0) {
+	if (cartStart) {
 		if (location >= 0) glUniform1i(location, 1);
 		else printf("uniform separator cannot be set\n");
 		cart.Draw();
@@ -327,7 +331,12 @@ void onDisplay() {
 // Key of ASCII code pressed
 void onKeyboard(unsigned char key, int pX, int pY) {
 	if (key == ' ') {
-		cartStart = 1;
+		cartStart = true;
+		glutPostRedisplay();
+	}
+	if (key == 'r')
+	{
+		cart.rotate(3.14 / 2);
 		glutPostRedisplay();
 	}
 }
